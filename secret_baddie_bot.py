@@ -20,7 +20,7 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 
 BOT_TOKEN    = "8664939937:AAGjjyZ3VfPY2YXp996YwNPRzGgYZe9DAko"
-CHANNEL_ID   = "@videolibra"
+CHANNEL_ID   = -1003716938045
 
 VIDEOS_FILE  = "videos.txt"
 USERS_FILE   = "users.json"
