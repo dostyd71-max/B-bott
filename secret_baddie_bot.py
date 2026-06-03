@@ -21,7 +21,7 @@ from telegram.ext import (
 
 BOT_TOKEN    = "8664939937:AAGjjyZ3VfPY2YXp996YwNPRzGgYZe9DAko"
 
-VIDEOS_FILE  = "videos.txt.py"
+VIDEOS_FILE  = "videos.txt"
 USERS_FILE   = "users.json"
 
 UNLOCK_TIMER = 45
