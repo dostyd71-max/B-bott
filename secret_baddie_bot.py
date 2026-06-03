@@ -20,9 +20,8 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 
 BOT_TOKEN    = "8664939937:AAGjjyZ3VfPY2YXp996YwNPRzGgYZe9DAko"
-CHANNEL_ID   = -1003716938045
 
-VIDEOS_FILE  = "videos.txt"
+VIDEOS_FILE  = "videos.txt.py"
 USERS_FILE   = "users.json"
 
 UNLOCK_TIMER = 45
@@ -45,21 +44,21 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# VIDEO ID LOADER
+# VIDEO LINK LOADER
 # ─────────────────────────────────────────────
 
-def load_video_ids() -> list:
+def load_video_links() -> list:
     path = Path(VIDEOS_FILE)
     if not path.exists():
         logger.warning(f"{VIDEOS_FILE} not found – starting with empty list.")
         return []
-    ids = []
+    links = []
     for line in path.read_text().splitlines():
         line = line.strip()
-        if line.isdigit():
-            ids.append(int(line))
-    logger.info(f"Loaded {len(ids)} video IDs from {VIDEOS_FILE}")
-    return ids
+        if line.startswith("http"):
+            links.append(line)
+    logger.info(f"Loaded {len(links)} video links from {VIDEOS_FILE}")
+    return links
 
 
 # ─────────────────────────────────────────────
@@ -99,9 +98,9 @@ def get_user(users: dict, uid: int) -> dict:
 # ─────────────────────────────────────────────
 
 def get_unseen_videos(user: dict) -> list:
-    all_ids = load_video_ids()
-    seen    = set(user["seen_videos"])
-    unseen  = [v for v in all_ids if v not in seen]
+    all_links = load_video_links()
+    seen      = set(user["seen_videos"])
+    unseen    = [v for v in all_links if v not in seen]
     random.shuffle(unseen)
     return unseen
 
@@ -130,25 +129,24 @@ def unlock_keyboard(ad_url: str) -> InlineKeyboardMarkup:
 
 
 # ─────────────────────────────────────────────
-# FORWARD VIDEOS
+# SEND VIDEOS
 # ─────────────────────────────────────────────
 
-async def forward_videos(count: int, user: dict, uid: int,
-                         context: ContextTypes.DEFAULT_TYPE) -> int:
+async def send_videos(count: int, user: dict, uid: int,
+                      context: ContextTypes.DEFAULT_TYPE) -> int:
     unseen  = get_unseen_videos(user)
     to_send = unseen[:count]
 
-    for msg_id in to_send:
+    for link in to_send:
         try:
-            await context.bot.forward_message(
+            await context.bot.send_message(
                 chat_id=uid,
-                from_chat_id=CHANNEL_ID,
-                message_id=msg_id,
+                text=f"🎬 Here is your video:\n{link}",
             )
-            user["seen_videos"].append(msg_id)
-            logger.info(f"Forwarded video {msg_id} to user {uid}")
+            user["seen_videos"].append(link)
+            logger.info(f"Sent video link to user {uid}")
         except Exception as e:
-            logger.error(f"Failed to forward video {msg_id} to {uid}: {e}")
+            logger.error(f"Failed to send video to {uid}: {e}")
 
     return len(to_send)
 
@@ -196,7 +194,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="Markdown",
     )
 
-    sent = await forward_videos(1, user, uid, context)
+    sent = await send_videos(1, user, uid, context)
     if sent == 0:
         await update.message.reply_text(
             "🎉 You've already unlocked everything! Check back soon for new drops."
@@ -216,7 +214,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     users = load_users()
     user  = get_user(users, uid)
 
-    total_vids = len(load_video_ids())
+    total_vids = len(load_video_links())
     seen_count = len(user["seen_videos"])
     remaining  = total_vids - seen_count
 
@@ -267,7 +265,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 parse_mode="Markdown",
             )
         else:
-            sent = await forward_videos(2, user, uid, context)
+            sent = await send_videos(2, user, uid, context)
             if sent > 0:
                 await send_unlock_prompt(uid, user, context)
             else:
@@ -297,7 +295,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     parse_mode="Markdown",
                 )
             else:
-                sent = await forward_videos(2, user, uid, context)
+                sent = await send_videos(2, user, uid, context)
                 if sent > 0:
                     still_unseen = get_unseen_videos(user)
                     if still_unseen:
@@ -313,7 +311,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         )
 
     elif data == "my_stats":
-        total_vids = len(load_video_ids())
+        total_vids = len(load_video_links())
         seen_count = len(user["seen_videos"])
         remaining  = total_vids - seen_count
 
@@ -357,8 +355,8 @@ def main() -> None:
     print("  Secret Baddie Unlock Bot  –  Starting up")
     print("=" * 50)
 
-    video_ids = load_video_ids()
-    print(f"  Videos loaded  : {len(video_ids)}")
+    video_links = load_video_links()
+    print(f"  Videos loaded  : {len(video_links)}")
     print(f"  Ad links ready : {len(AD_LINKS)}")
     print(f"  Unlock timer   : {UNLOCK_TIMER}s")
     print("=" * 50)
