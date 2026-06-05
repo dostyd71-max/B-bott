@@ -6,6 +6,7 @@ import random
 import time
 import logging
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -13,6 +14,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    JobQueue,
 )
 
 # ─────────────────────────────────────────────
@@ -20,16 +22,29 @@ from telegram.ext import (
 # ─────────────────────────────────────────────
 
 BOT_TOKEN    = "8664939937:AAGjjyZ3VfPY2YXp996YwNPRzGgYZe9DAko"
+CHANNEL_ID   = "@daniel4060"
 
 VIDEOS_FILE  = "videos.txt"
 USERS_FILE   = "users.json"
 
 UNLOCK_TIMER = 45
+VIDEOS_PER_UNLOCK = 3
 
-AD_LINKS = [
-    "https://www.effectivecpmnetwork.com/sv07qnajbb?key=1f69dc6d466030073eaf49bfd0a8edd7",
-    "https://omg10.com/4/10213320",
-    "https://www.effectivecpmnetwork.com/jrtna0n5?key=4d11c7c16ef4195cc8febfa939ca3bc3",
+# Ad rotation logic:
+# Unlock 1,2 → Adsterra
+# Unlock 3   → Monetag
+# Unlock 4+  → Kadam
+# After 24hrs → reset back to Adsterra
+
+ADSTERRA  = "https://www.effectivecpmnetwork.com/sv07qnajbb?key=1f69dc6d466030073eaf49bfd0a8edd7"
+MONETAG   = "https://omg10.com/4/10213320"
+KADAM     = "https://viiukuhe.com/dc/?blockID=423240&tb=https%3A%2F%2Fwww.profitablecpmratenetwork.com%2F"
+
+# Notification messages — 3 different ones sent throughout the day
+NOTIFICATIONS = [
+    "🔥 *Psst... new baddies are waiting for you!*\n\nYou've got unseen videos sitting there. Come unlock them before someone else does 👀",
+    "😍 *Your daily dose of exclusive content is ready!*\n\nTap below and unlock your videos now 🔓",
+    "💦 *Still thinking about it?*\n\nThe hottest content is just one task away. Come get it 🎬🔥",
 ]
 
 # ─────────────────────────────────────────────
@@ -44,21 +59,21 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# VIDEO LINK LOADER
+# VIDEO ID LOADER
 # ─────────────────────────────────────────────
 
-def load_video_links() -> list:
+def load_video_ids() -> list:
     path = Path(VIDEOS_FILE)
     if not path.exists():
         logger.warning(f"{VIDEOS_FILE} not found – starting with empty list.")
         return []
-    links = []
+    ids = []
     for line in path.read_text().splitlines():
         line = line.strip()
-        if line.startswith("http"):
-            links.append(line)
-    logger.info(f"Loaded {len(links)} video links from {VIDEOS_FILE}")
-    return links
+        if line.isdigit():
+            ids.append(int(line))
+    logger.info(f"Loaded {len(ids)} video IDs from {VIDEOS_FILE}")
+    return ids
 
 
 # ─────────────────────────────────────────────
@@ -87,10 +102,43 @@ def get_user(users: dict, uid: int) -> dict:
         users[key] = {
             "seen_videos": [],
             "unlocks": 0,
-            "ad_index": 0,
             "link_sent_at": 0,
+            "link_clicked_at": 0,
+            "first_unlock_time": 0,
+            "notification_index": 0,
         }
     return users[key]
+
+
+# ─────────────────────────────────────────────
+# AD LINK LOGIC
+# ─────────────────────────────────────────────
+
+def get_ad_link(user: dict) -> str:
+    """
+    Returns the correct ad link based on unlock count and 24hr reset.
+    Unlock 1,2 → Adsterra
+    Unlock 3   → Monetag
+    Unlock 4+  → Kadam
+    After 24hrs from first unlock → reset cycle
+    """
+    now = time.time()
+    first_unlock = user.get("first_unlock_time", 0)
+
+    # Reset cycle after 24 hours
+    if first_unlock > 0 and (now - first_unlock) > 86400:
+        user["unlocks"] = 0
+        user["first_unlock_time"] = now
+        logger.info(f"24hr reset for user — ad cycle restarted")
+
+    unlocks = user.get("unlocks", 0)
+
+    if unlocks < 2:
+        return ADSTERRA
+    elif unlocks == 2:
+        return MONETAG
+    else:
+        return KADAM
 
 
 # ─────────────────────────────────────────────
@@ -98,19 +146,11 @@ def get_user(users: dict, uid: int) -> dict:
 # ─────────────────────────────────────────────
 
 def get_unseen_videos(user: dict) -> list:
-    all_links = load_video_links()
-    seen      = set(user["seen_videos"])
-    unseen    = [v for v in all_links if v not in seen]
+    all_ids = load_video_ids()
+    seen    = set(user["seen_videos"])
+    unseen  = [v for v in all_ids if v not in seen]
     random.shuffle(unseen)
     return unseen
-
-
-def current_ad_link(user: dict) -> str:
-    return AD_LINKS[user["ad_index"] % len(AD_LINKS)]
-
-
-def advance_ad_link(user: dict) -> None:
-    user["ad_index"] = (user["ad_index"] + 1) % len(AD_LINKS)
 
 
 def main_menu_keyboard() -> InlineKeyboardMarkup:
@@ -123,30 +163,38 @@ def main_menu_keyboard() -> InlineKeyboardMarkup:
 
 def unlock_keyboard(ad_url: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Complete Task to Unlock", callback_data="link_clicked")],
+        [InlineKeyboardButton("🔓 I completed the task",   callback_data="claimed")],
+    ])
+
+
+def unlock_keyboard_with_url(ad_url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Complete Task to Unlock", url=ad_url)],
         [InlineKeyboardButton("🔓 I completed the task",   callback_data="claimed")],
     ])
 
 
 # ─────────────────────────────────────────────
-# SEND VIDEOS
+# FORWARD VIDEOS
 # ─────────────────────────────────────────────
 
-async def send_videos(count: int, user: dict, uid: int,
-                      context: ContextTypes.DEFAULT_TYPE) -> int:
+async def forward_videos(count: int, user: dict, uid: int,
+                         context: ContextTypes.DEFAULT_TYPE) -> int:
     unseen  = get_unseen_videos(user)
     to_send = unseen[:count]
 
-    for link in to_send:
+    for msg_id in to_send:
         try:
-            await context.bot.send_message(
+            await context.bot.forward_message(
                 chat_id=uid,
-                text=f"🎬 Here is your video:\n{link}",
+                from_chat_id=CHANNEL_ID,
+                message_id=msg_id,
             )
-            user["seen_videos"].append(link)
-            logger.info(f"Sent video link to user {uid}")
+            user["seen_videos"].append(msg_id)
+            logger.info(f"Forwarded video {msg_id} to user {uid}")
         except Exception as e:
-            logger.error(f"Failed to send video to {uid}: {e}")
+            logger.error(f"Failed to forward video {msg_id} to {uid}: {e}")
 
     return len(to_send)
 
@@ -157,19 +205,20 @@ async def send_videos(count: int, user: dict, uid: int,
 
 async def send_unlock_prompt(uid: int, user: dict,
                               context: ContextTypes.DEFAULT_TYPE) -> None:
-    ad_url = current_ad_link(user)
+    ad_url = get_ad_link(user)
     user["link_sent_at"] = time.time()
+    user["link_clicked_at"] = 0  # reset click tracker
 
     await context.bot.send_message(
         chat_id=uid,
         text=(
-            "🔐 *Want 2 more videos?* Complete this quick task:\n\n"
+            "🔐 *Want 3 more videos?* Complete this quick task:\n\n"
             "1️⃣  Tap *Complete Task to Unlock* below\n"
             "2️⃣  Visit the link (stay a moment)\n"
             "3️⃣  Come back and tap *I completed the task*"
         ),
         parse_mode="Markdown",
-        reply_markup=unlock_keyboard(ad_url),
+        reply_markup=unlock_keyboard_with_url(ad_url),
     )
     logger.info(f"Sent unlock prompt to user {uid}")
 
@@ -194,7 +243,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         parse_mode="Markdown",
     )
 
-    sent = await send_videos(1, user, uid, context)
+    sent = await forward_videos(1, user, uid, context)
     if sent == 0:
         await update.message.reply_text(
             "🎉 You've already unlocked everything! Check back soon for new drops."
@@ -214,7 +263,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     users = load_users()
     user  = get_user(users, uid)
 
-    total_vids = len(load_video_links())
+    total_vids = len(load_video_ids())
     seen_count = len(user["seen_videos"])
     remaining  = total_vids - seen_count
 
@@ -242,6 +291,46 @@ async def adminstats_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # ─────────────────────────────────────────────
+# NOTIFICATIONS
+# ─────────────────────────────────────────────
+
+async def send_notifications(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send 3 different notification messages throughout the day to all users."""
+    users = load_users()
+    if not users:
+        return
+
+    # Pick which notification to send based on time of day
+    hour = datetime.now().hour
+    if hour < 10:
+        notif_index = 0
+    elif hour < 17:
+        notif_index = 1
+    else:
+        notif_index = 2
+
+    message = NOTIFICATIONS[notif_index]
+    sent_count = 0
+
+    for uid_str, user in users.items():
+        # Only notify users who haven't seen all videos
+        unseen = get_unseen_videos(user)
+        if unseen:
+            try:
+                await context.bot.send_message(
+                    chat_id=int(uid_str),
+                    text=message,
+                    parse_mode="Markdown",
+                    reply_markup=main_menu_keyboard(),
+                )
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to notify user {uid_str}: {e}")
+
+    logger.info(f"Sent notifications to {sent_count} users")
+
+
+# ─────────────────────────────────────────────
 # BUTTON HANDLER
 # ─────────────────────────────────────────────
 
@@ -254,6 +343,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     users = load_users()
     user  = get_user(users, uid)
 
+    # ── GET VIDEOS ──────────────────────────────
     if data == "get_videos":
         logger.info(f"User {uid} tapped Get Videos")
         unseen = get_unseen_videos(user)
@@ -265,7 +355,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 parse_mode="Markdown",
             )
         else:
-            sent = await send_videos(2, user, uid, context)
+            sent = await forward_videos(VIDEOS_PER_UNLOCK, user, uid, context)
             if sent > 0:
                 await send_unlock_prompt(uid, user, context)
             else:
@@ -275,17 +365,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     parse_mode="Markdown",
                 )
 
-    elif data == "claimed":
-        elapsed = time.time() - user.get("link_sent_at", 0)
-        logger.info(f"User {uid} claimed after {elapsed:.1f}s")
+    # ── LINK CLICKED (tracks that user tapped the ad link) ──
+    elif data == "link_clicked":
+        user["link_clicked_at"] = time.time()
+        await query.answer("✅ Great! Now wait a moment then tap 'I completed the task'")
+        logger.info(f"User {uid} clicked the ad link")
 
-        if elapsed < UNLOCK_TIMER:
+    # ── CLAIMED ─────────────────────────────────
+    elif data == "claimed":
+        elapsed       = time.time() - user.get("link_sent_at", 0)
+        link_clicked  = user.get("link_clicked_at", 0)
+        logger.info(f"User {uid} claimed after {elapsed:.1f}s, clicked={link_clicked > 0}")
+
+        if link_clicked == 0:
+            # Never clicked the link
+            await query.message.reply_text(
+                "⚠️ Please tap *Complete Task to Unlock* first and visit the link!",
+                parse_mode="Markdown",
+            )
+        elif elapsed < UNLOCK_TIMER:
+            # Clicked but didn't wait long enough
             await query.message.reply_text(
                 "⏳ Please make sure you visited the link completely and try again!"
             )
         else:
+            # All good — reward the user
             user["unlocks"] += 1
-            advance_ad_link(user)
+            if user.get("first_unlock_time", 0) == 0:
+                user["first_unlock_time"] = time.time()
 
             unseen = get_unseen_videos(user)
             if not unseen:
@@ -295,7 +402,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     parse_mode="Markdown",
                 )
             else:
-                sent = await send_videos(2, user, uid, context)
+                sent = await forward_videos(VIDEOS_PER_UNLOCK, user, uid, context)
                 if sent > 0:
                     still_unseen = get_unseen_videos(user)
                     if still_unseen:
@@ -310,8 +417,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                             parse_mode="Markdown",
                         )
 
+    # ── MY STATS ────────────────────────────────
     elif data == "my_stats":
-        total_vids = len(load_video_links())
+        total_vids = len(load_video_ids())
         seen_count = len(user["seen_videos"])
         remaining  = total_vids - seen_count
 
@@ -323,13 +431,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode="Markdown",
         )
 
+    # ── HOW IT WORKS ────────────────────────────
     elif data == "how_it_works":
         await query.message.reply_text(
             "ℹ️ *How Secret Baddie Unlock Works*\n\n"
-            "1️⃣  Tap *Get Videos* to receive 2 exclusive videos\n"
+            "1️⃣  Tap *Get Videos* to receive 3 exclusive videos\n"
             "2️⃣  Tap *Complete Task to Unlock* and visit the link\n"
             "3️⃣  Wait a moment, then tap *I completed the task*\n"
-            "4️⃣  Unlock 2 more videos instantly! 🎬\n\n"
+            "4️⃣  Unlock 3 more videos instantly! 🎬\n\n"
             "New videos drop daily 🔥",
             parse_mode="Markdown",
             reply_markup=main_menu_keyboard(),
@@ -355,19 +464,27 @@ def main() -> None:
     print("  Secret Baddie Unlock Bot  –  Starting up")
     print("=" * 50)
 
-    video_links = load_video_links()
-    print(f"  Videos loaded  : {len(video_links)}")
-    print(f"  Ad links ready : {len(AD_LINKS)}")
+    video_ids = load_video_ids()
+    print(f"  Videos loaded  : {len(video_ids)}")
+    print(f"  Ad links ready : 3 (Adsterra → Monetag → Kadam)")
     print(f"  Unlock timer   : {UNLOCK_TIMER}s")
+    print(f"  Videos/unlock  : {VIDEOS_PER_UNLOCK}")
     print("=" * 50)
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Register handlers
     app.add_handler(CommandHandler("start",      start))
     app.add_handler(CommandHandler("stats",      stats_command))
     app.add_handler(CommandHandler("adminstats", adminstats_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
+
+    # Schedule notifications 3 times a day
+    job_queue = app.job_queue
+    job_queue.run_daily(send_notifications, time=datetime.strptime("09:00", "%H:%M").time())
+    job_queue.run_daily(send_notifications, time=datetime.strptime("14:00", "%H:%M").time())
+    job_queue.run_daily(send_notifications, time=datetime.strptime("20:00", "%H:%M").time())
 
     print("  Bot is running...\n")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
