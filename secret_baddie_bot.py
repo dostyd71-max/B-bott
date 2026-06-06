@@ -473,19 +473,17 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Register handlers
     app.add_handler(CommandHandler("start",      start))
     app.add_handler(CommandHandler("stats",      stats_command))
     app.add_handler(CommandHandler("adminstats", adminstats_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_error_handler(error_handler)
 
-    # Schedule notifications 3 times a day
-    job_queue = app.job_queue
     from datetime import time as dtime
-job_queue.run_daily(send_notifications, time=dtime(9, 0))
-job_queue.run_daily(send_notifications, time=dtime(14, 0))
-job_queue.run_daily(send_notifications, time=dtime(20, 0))
+    job_queue = app.job_queue
+    job_queue.run_daily(send_notifications, time=dtime(9, 0))
+    job_queue.run_daily(send_notifications, time=dtime(14, 0))
+    job_queue.run_daily(send_notifications, time=dtime(20, 0))
 
     print("  Bot is running...\n")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
