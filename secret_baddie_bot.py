@@ -482,9 +482,10 @@ def main() -> None:
 
     # Schedule notifications 3 times a day
     job_queue = app.job_queue
-    job_queue.run_daily(send_notifications, time=datetime.strptime("09:00", "%H:%M").time())
-    job_queue.run_daily(send_notifications, time=datetime.strptime("14:00", "%H:%M").time())
-    job_queue.run_daily(send_notifications, time=datetime.strptime("20:00", "%H:%M").time())
+    from datetime import time as dtime
+job_queue.run_daily(send_notifications, time=dtime(9, 0))
+job_queue.run_daily(send_notifications, time=dtime(14, 0))
+job_queue.run_daily(send_notifications, time=dtime(20, 0))
 
     print("  Bot is running...\n")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
