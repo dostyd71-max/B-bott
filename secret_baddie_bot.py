@@ -150,10 +150,10 @@ async def forward_videos(count, user, uid, context):
     to_send = unseen[:count]
     for msg_id in to_send:
         try:
-            await context.bot.forward_message(
-                chat_id=uid,
-                from_chat_id=CHANNEL_ID,
-                message_id=msg_id,
+            await context.bot.copy_message(
+    chat_id=uid,
+    from_chat_id=CHANNEL_ID,
+    message_id=msg_id,
             )
             user["seen_videos"].append(msg_id)
             logger.info(f"Forwarded video {msg_id} to user {uid}")
