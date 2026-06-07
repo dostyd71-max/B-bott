@@ -269,7 +269,9 @@ async def send_notifications(context: ContextTypes.DEFAULT_TYPE):
                     chat_id=int(uid_str),
                     text=message,
                     parse_mode="Markdown",
-                    reply_markup=main_menu_keyboard(),
+                    reply_markup=InlineKeyboardMarkup([
+    [InlineKeyboardButton("🔓 Unlock Videos Now", callback_data="get_videos")]
+]),
                 )
                 sent_count += 1
             except Exception as e:
