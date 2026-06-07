@@ -174,9 +174,10 @@ async def send_unlock_prompt(uid, user, context):
         chat_id=uid,
         text=(
             "🔐 *Want 3 more videos?* Complete this quick task:\n\n"
-            "1️⃣  Tap *Complete Task to Unlock* below\n"
-            "2️⃣  Visit the link (stay a moment)\n"
-            "3️⃣  Come back and tap *I completed the task*"
+            "1️⃣  Visit the link\n"
+            "2️⃣  Complete simple task\n"
+            "3️⃣  Unlock videos 🔓"
+        ),
         ),
         parse_mode="Markdown",
         reply_markup=unlock_keyboard(ad_url),
