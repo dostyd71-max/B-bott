@@ -138,7 +138,7 @@ async def send_videos(count, user, uid, context):
 async def send_unlock_prompt(uid, user, context):
     ad_url = get_ad_link(user)
     user["link_sent_at"] = time.time()
-    logger.info(f"Timer started for user {uid} at {user['link_sent_at']}")
+    logger.info(f"Timer started for user {uid}")
     await context.bot.send_message(
         chat_id=uid,
         text=(
@@ -246,6 +246,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "get_videos":
         logger.info(f"User {uid} tapped Get Videos")
+
+        link_sent = user.get("link_sent_at", 0)
+        elapsed = time.time() - link_sent
+        if link_sent > 0 and elapsed < 3600:
+            await query.message.reply_text(
+                "⏳ Please complete your current task first to unlock more videos!"
+            )
+            save_users(users)
+            return
+
         unseen = get_unseen_videos(user)
         if not unseen:
             await query.message.reply_text(
@@ -271,6 +281,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             user["unlocks"] += 1
+            user["link_sent_at"] = 0
             if user.get("first_unlock_time", 0) == 0:
                 user["first_unlock_time"] = time.time()
             unseen = get_unseen_videos(user)
@@ -311,7 +322,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "4️⃣  Unlock 3 more videos instantly! 🎬\n\n"
             "New videos drop daily 🔥",
             parse_mode="Markdown",
-            reply_markup=main_menu_keyboard(),
         )
 
     save_users(users)
