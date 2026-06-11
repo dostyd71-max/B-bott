@@ -20,9 +20,8 @@ USERS_FILE        = "/data/data/com.termux/files/home/users.json"
 UNLOCK_TIMER      = 45
 VIDEOS_PER_UNLOCK = 3
 
-ADSTERRA = "https://www.effectivecpmnetwork.com/sv07qnajbb?key=1f69dc6d466030073eaf49bfd0a8edd7"
-MONETAG  = "https://omg10.com/4/10213320"
-KADAM    = "https://viiukuhe.com/dc/?blockID=423240&tb=https%3A%2F%2Fwww.profitablecpmratenetwork.com%2F"
+ADSTERRA1 = "https://www.effectivecpmnetwork.com/sv07qnajbb?key=1f69dc6d466030073eaf49bfd0a8edd7"
+ADSTERRA2 = "https://www.effectivecpmnetwork.com/jrtna0n5?key=4d11c7c16ef4195cc8febfa939ca3bc3"
 
 NOTIFICATIONS = [
     "🔥 *Psst... new baddies are waiting for you!*\n\nYou've got unseen videos sitting there. Come unlock them before someone else does 👀",
@@ -79,18 +78,11 @@ def get_user(users, uid):
 
 
 def get_ad_link(user):
-    now = time.time()
-    first_unlock = user.get("first_unlock_time", 0)
-    if first_unlock > 0 and (now - first_unlock) > 86400:
-        user["unlocks"] = 0
-        user["first_unlock_time"] = now
     unlocks = user.get("unlocks", 0)
-    if unlocks < 2:
-        return ADSTERRA
-    elif unlocks == 2:
-        return MONETAG
+    if unlocks % 2 == 0:
+        return ADSTERRA1
     else:
-        return KADAM
+        return ADSTERRA2
 
 
 def get_unseen_videos(user):
@@ -246,7 +238,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "get_videos":
         logger.info(f"User {uid} tapped Get Videos")
-
         link_sent = user.get("link_sent_at", 0)
         elapsed = time.time() - link_sent
         if link_sent > 0 and elapsed < 3600:
@@ -255,7 +246,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             save_users(users)
             return
-
         unseen = get_unseen_videos(user)
         if not unseen:
             await query.message.reply_text(
